@@ -79,7 +79,7 @@ class TCCalculator(object):
             
             arcpy.AddMessage(f"Processing feature class: {fc_path}")
             arcpy.AddMessage(f"Precipitation: {precipitation} inches")
-            arcpy.AddMessage(f"Minimum Tc: 10 minutes")
+            arcpy.AddMessage(f"Minimum Tc (Basin): 10 minutes")
             
             # Manning's n coefficients for Sheet Flow
             sheet_flow_n = {
@@ -104,7 +104,7 @@ class TCCalculator(object):
             # Fixed velocities
             PIPE_VELOCITY = 2.50  # ft/s
             CHANNEL_VELOCITY = 2.00  # ft/s
-            MIN_TC = 10  # minutes
+            MIN_TC_BASIN = 10  # minutes (applied to final basin TC)
             
             # Dictionary to store basin TC times
             basin_tc_dict = {}
@@ -129,7 +129,7 @@ class TCCalculator(object):
                         # Calculate slope
                         if shape_length == 0 or shape_length is None:
                             arcpy.AddWarning(f"Segment {segment_id}: Shape_Length is 0 or null")
-                            segment_tc = MIN_TC
+                            segment_tc = 0
                         else:
                             elevation_diff = abs(upstream_e - downstream_e)
                             slope = elevation_diff / shape_length if shape_length > 0 else 0
@@ -143,10 +143,10 @@ class TCCalculator(object):
                                     if slope > 0 and precipitation > 0:
                                         segment_tc = (0.007 * n * shape_length) / (math.sqrt(slope) * math.sqrt(precipitation))
                                     else:
-                                        segment_tc = MIN_TC
+                                        segment_tc = 0
                                 else:
                                     arcpy.AddWarning(f"Segment {segment_id}: Invalid SURFCODE '{surfcode}' for Sheet Flow")
-                                    segment_tc = MIN_TC
+                                    segment_tc = 0
                             
                             elif flowtype == 2:  # Shallow Concentrated Flow
                                 # Tt = L / (V * 60), where V is in ft/s, convert to minutes
@@ -155,7 +155,7 @@ class TCCalculator(object):
                                     segment_tc = (shape_length / velocity) / 60  # Convert seconds to minutes
                                 else:
                                     arcpy.AddWarning(f"Segment {segment_id}: Invalid SURFCODE '{surfcode}' for Shallow Concentrated Flow")
-                                    segment_tc = MIN_TC
+                                    segment_tc = 0
                             
                             elif flowtype == 3:  # Pipe Flow
                                 # Tt = L / (V * 60)
@@ -171,11 +171,7 @@ class TCCalculator(object):
                             
                             else:
                                 arcpy.AddWarning(f"Segment {segment_id}: Invalid FLOWTYPE '{flowtype}'")
-                                segment_tc = MIN_TC
-                        
-                        # Apply minimum TC
-                        if segment_tc < MIN_TC and flowtype != 4:  # Don't apply minimum to pond flow (0)
-                            segment_tc = MIN_TC
+                                segment_tc = 0
                         
                         # Store in dictionary for basin aggregation
                         if basin_name not in basin_tc_dict:
@@ -190,20 +186,28 @@ class TCCalculator(object):
                     
                     except Exception as e:
                         arcpy.AddError(f"Error processing Segment {segment_id}: {str(e)}")
-                        segment_tc = MIN_TC
+                        segment_tc = 0
                         row[7] = segment_tc
                         cursor.updateRow(row)
             
-            # Second pass: Update BASIN_TC field
+            # Second pass: Update BASIN_TC field with minimum applied
             with arcpy.da.UpdateCursor(fc_path, ['BASIN_NAME', 'BASIN_TC']) as cursor:
                 for row in cursor:
                     basin_name, basin_tc = row
                     if basin_name in basin_tc_dict:
-                        row[1] = basin_tc_dict[basin_name]
+                        final_basin_tc = basin_tc_dict[basin_name]
+                        # Apply 10-minute minimum to final basin TC
+                        if final_basin_tc < MIN_TC_BASIN:
+                            final_basin_tc = MIN_TC_BASIN
+                        row[1] = final_basin_tc
                         cursor.updateRow(row)
             
             arcpy.AddMessage("\n=== Basin TC Summary ===")
-            for basin_name, basin_tc in sorted(basin_tc_dict.items()):
+            for basin_name in sorted(basin_tc_dict.keys()):
+                basin_tc = basin_tc_dict[basin_name]
+                # Apply 10-minute minimum for display
+                if basin_tc < MIN_TC_BASIN:
+                    basin_tc = MIN_TC_BASIN
                 arcpy.AddMessage(f"Basin: {basin_name} | Total TC: {basin_tc:.2f} minutes")
             
             arcpy.AddMessage("\nTC Calculation completed successfully!")
