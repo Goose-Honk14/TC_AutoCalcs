@@ -67,15 +67,14 @@ class TCCalculator(object):
         )
         param4.value = True
 
-        # Parameter 5: Output Excel Path
+        # Parameter 5: Output Excel Directory (Optional - will auto-generate filename if not provided)
         param5 = arcpy.Parameter(
-            displayName="Output Excel File Path",
-            name="excel_path",
-            datatype="DEFile",
+            displayName="Output Excel Directory (leave blank for auto-generated file)",
+            name="excel_directory",
+            datatype="DEFolder",
             parameterType="Optional",
             direction="Input"
         )
-        param5.filter.list = ["xlsx"]
 
         return [param0, param1, param2, param3, param4, param5]
 
@@ -94,7 +93,7 @@ class TCCalculator(object):
         output_gdb = parameters[2].valueAsText
         precipitation = parameters[3].value
         export_excel = parameters[4].value
-        excel_path = parameters[5].valueAsText
+        excel_directory = parameters[5].valueAsText
 
         try:
             arcpy.env.workspace = input_gdb
@@ -103,7 +102,7 @@ class TCCalculator(object):
             if not fc_name or fc_name.strip() == "":
                 fc_name = self._find_tc_feature_class(input_gdb, arcpy)
                 if not fc_name:
-                    arcpy.AddError("Could not find 'TC' feature class in the geodatabase. Please specify the feature class name.")
+                    arcpy.AddError("Could not find 'TC' feature class in the geodatabase or its feature datasets. Please specify the feature class name.")
                     raise Exception("Feature class 'TC' not found")
                 arcpy.AddMessage(f"Auto-detected feature class: {fc_name}")
             
@@ -273,8 +272,19 @@ class TCCalculator(object):
                     'final_basin_tc': final_basin_tc
                 })
             
-            # Export to Excel if requested
-            if export_excel and excel_path:
+            # Generate or use provided Excel file path
+            excel_path = None
+            if export_excel:
+                if excel_directory:
+                    # Generate filename based on timestamp
+                    excel_filename = f"TC_Results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+                    excel_path = os.path.join(excel_directory, excel_filename)
+                else:
+                    # Use output GDB directory if no directory specified
+                    output_dir = os.path.dirname(output_gdb)
+                    excel_filename = f"TC_Results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+                    excel_path = os.path.join(output_dir, excel_filename)
+                
                 self._export_to_excel(excel_path, segment_details, basin_summary, precipitation, MIN_TC_BASIN, arcpy)
                 arcpy.AddMessage(f"\nExcel report exported to: {excel_path}")
             
@@ -287,18 +297,30 @@ class TCCalculator(object):
     def _find_tc_feature_class(self, gdb_path, arcpy):
         """
         Search for a feature class named 'TC' in the geodatabase.
-        Returns the feature class name if found, otherwise None.
+        Searches both root level and inside feature datasets.
+        Returns the full path to the feature class if found, otherwise None.
         """
         try:
             arcpy.env.workspace = gdb_path
-            feature_classes = arcpy.ListFeatureClasses()
             
-            # Look for exact match first
+            # First, search for TC at root level
+            feature_classes = arcpy.ListFeatureClasses()
             for fc in feature_classes:
                 if fc.lower() == 'tc':
                     return fc
             
-            # If no exact match, return None
+            # Then search within feature datasets
+            feature_datasets = arcpy.ListDatasets('', 'Feature')
+            for fds in feature_datasets:
+                arcpy.env.workspace = os.path.join(gdb_path, fds)
+                feature_classes = arcpy.ListFeatureClasses()
+                for fc in feature_classes:
+                    if fc.lower() == 'tc':
+                        # Return the full path relative to the GDB
+                        return f"{fds}/{fc}"
+            
+            # Reset workspace
+            arcpy.env.workspace = gdb_path
             return None
         except Exception as e:
             arcpy.AddError(f"Error searching for feature classes: {str(e)}")
