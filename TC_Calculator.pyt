@@ -28,12 +28,12 @@ class TCCalculator(object):
         )
         param0.filter.list = ["Local Database"]
 
-        # Parameter 1: Feature Class Name
+        # Parameter 1: Feature Class Name (Optional - will auto-detect TC if not provided)
         param1 = arcpy.Parameter(
-            displayName="TC Links Feature Class",
+            displayName="TC Links Feature Class (leave blank to auto-detect 'TC')",
             name="feature_class",
             datatype="GPString",
-            parameterType="Required",
+            parameterType="Optional",
             direction="Input"
         )
 
@@ -98,6 +98,14 @@ class TCCalculator(object):
 
         try:
             arcpy.env.workspace = input_gdb
+            
+            # Auto-detect TC feature class if not provided
+            if not fc_name or fc_name.strip() == "":
+                fc_name = self._find_tc_feature_class(input_gdb, arcpy)
+                if not fc_name:
+                    arcpy.AddError("Could not find 'TC' feature class in the geodatabase. Please specify the feature class name.")
+                    raise Exception("Feature class 'TC' not found")
+                arcpy.AddMessage(f"Auto-detected feature class: {fc_name}")
             
             # Build feature class path
             fc_path = os.path.join(input_gdb, fc_name)
@@ -275,6 +283,26 @@ class TCCalculator(object):
         except Exception as e:
             arcpy.AddError(f"Error: {str(e)}")
             raise
+
+    def _find_tc_feature_class(self, gdb_path, arcpy):
+        """
+        Search for a feature class named 'TC' in the geodatabase.
+        Returns the feature class name if found, otherwise None.
+        """
+        try:
+            arcpy.env.workspace = gdb_path
+            feature_classes = arcpy.ListFeatureClasses()
+            
+            # Look for exact match first
+            for fc in feature_classes:
+                if fc.lower() == 'tc':
+                    return fc
+            
+            # If no exact match, return None
+            return None
+        except Exception as e:
+            arcpy.AddError(f"Error searching for feature classes: {str(e)}")
+            return None
 
     def _export_to_excel(self, excel_path, segment_details, basin_summary, precipitation, min_tc_basin, arcpy):
         """Export calculation results to Excel workbook"""
